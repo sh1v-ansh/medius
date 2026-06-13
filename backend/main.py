@@ -16,6 +16,7 @@ from backend.legal_engine.transcribe import transcribe
 from backend.legal_engine.ocr import ocr
 from backend.briefing import produce_briefing
 from backend.triage import run_triage
+from backend.steelman import build_steelman_argument, build_shared_reality
 
 app = FastAPI(
     title="Medius Backend",
@@ -244,6 +245,95 @@ def triage_case(case_id: str) -> Any:
         ai_suggestion={
             "composite": result["composite"],
             "scores": result["scores"],
+        },
+        human_decision=None,
+    )
+    return result
+
+
+# ── Steelman ──────────────────────────────────────────────────────────────────
+
+@app.post("/cases/{case_id}/steelman")
+def steelman_case(case_id: str) -> Any:
+    """
+    Produce the strongest honest statute-cited argument for EACH side.
+    Same code path for both — symmetric process.
+    """
+    case = get_case(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    result: dict[str, Any] = {}
+    for party in ("initiator", "respondent"):
+        answers = case["intake"][party]["answers"]
+        source_text = (
+            answers.get("__doc_text__")
+            or case["parties"][party].get("narrative")
+            or case["intake"][party].get("transcript")
+            or ""
+        )
+        if not source_text.strip():
+            raise HTTPException(
+                status_code=422,
+                detail=f"No intake text for {party} — complete intake first",
+            )
+        perspective = case["parties"][party].get("role", party)
+        result[f"{party}_argument"] = build_steelman_argument(source_text, perspective)
+
+    case["steelman"] = result
+    save_case(case)
+
+    audit_log(
+        case_id,
+        actor="ai",
+        action="steelman",
+        ai_suggestion={
+            "initiator_citations": len(result["initiator_argument"]["citations"]),
+            "respondent_citations": len(result["respondent_argument"]["citations"]),
+        },
+        human_decision=None,
+    )
+    return result
+
+
+# ── Shared reality ────────────────────────────────────────────────────────────
+
+@app.post("/cases/{case_id}/shared-reality")
+def shared_reality(case_id: str) -> Any:
+    """
+    Derive a statutory damage range visible to BOTH parties.
+    This is a negotiation anchor only — not an AI-chosen settlement.
+    """
+    case = get_case(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    # Collect all retrieved statute IDs from both briefings
+    retrieved_ids: list[str] = []
+    for party in ("initiator", "respondent"):
+        briefing = case["briefings"].get(party)
+        if briefing:
+            retrieved_ids.extend(c["statute_id"] for c in briefing.get("citations", []))
+
+    if not retrieved_ids:
+        # Fall back to steelman citations
+        steelman = case.get("steelman") or {}
+        for party in ("initiator", "respondent"):
+            arg = steelman.get(f"{party}_argument", {})
+            retrieved_ids.extend(c["statute_id"] for c in arg.get("citations", []))
+
+    result = build_shared_reality(case, list(set(retrieved_ids)))
+    case["shared_reality"] = result
+    save_case(case)
+
+    audit_log(
+        case_id,
+        actor="ai",
+        action="shared_reality",
+        ai_suggestion={
+            "floor": result["floor"],
+            "ceiling": result["ceiling"],
+            "statutes_matched": result["basis"]["statutes_matched"],
         },
         human_decision=None,
     )

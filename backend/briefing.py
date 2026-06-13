@@ -36,7 +36,7 @@ NOT_CONSIDERED = [
 
 def _ids_in_text(text: str) -> set[str]:
     """Return all MGL_* statute IDs found in a block of text."""
-    return set(re.findall(r"MGL_[A-Z0-9_]+", text))
+    return set(re.findall(r"MGL_[A-Za-z0-9_]+", text))
 
 
 def verify_citations(
