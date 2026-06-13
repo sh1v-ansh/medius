@@ -5,6 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "clean": "rm -rf .next",
+    "fresh": "rm -rf .next && next dev",
     "test": "vitest run",
     "test:ui": "vitest --ui"
   },
