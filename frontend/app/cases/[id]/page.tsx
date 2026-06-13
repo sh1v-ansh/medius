@@ -12,6 +12,7 @@ import { SharedRealityRange } from '../../components/SharedRealityRange'
 import { TalkToHuman } from '../../components/trust/TalkToHuman'
 import { AiBadge } from '../../components/trust/AiBadge'
 import { LeaseAnalysis } from '../../components/LeaseAnalysis'
+import { SteelmanView } from '../../components/SteelmanView'
 import {
   getCase,
   getAudit,
@@ -460,37 +461,33 @@ function FullCaseTab({
   return (
     <div className="space-y-8">
       {/* Steelman arguments */}
-      <section className="shadow-sm border border-gray-200 rounded-xl p-5 bg-white space-y-4">
-        <div className="flex items-center justify-between">
-          <h3 className="font-semibold text-gray-800">Strongest arguments (steelman)</h3>
-          {!steelman && (
+      <section className="space-y-4">
+        {!steelman && (
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 flex items-center justify-between">
+            <div>
+              <h3 className="font-semibold text-slate-900">Argument Analysis</h3>
+              <p className="text-sm text-slate-500 mt-0.5">
+                AI steelmans each side's case — including logical fallacy detection.
+              </p>
+            </div>
             <ActionButton onClick={handleSteelman} loading={steelmanLoading} variant="secondary">
-              {steelmanLoading ? 'Generating…' : 'Generate steelman arguments'}
+              {steelmanLoading ? 'Analysing…' : 'Generate arguments'}
             </ActionButton>
-          )}
-        </div>
-        {steelmanError && <ErrorBox message={steelmanError} />}
-        {steelman ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {(['initiator', 'respondent'] as const).map((p) => {
-              const arg = steelman[`${p}_argument`]
-              if (!arg) return null
-              return (
-                <div key={p} className="border border-gray-200 rounded-xl p-4 space-y-3">
-                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{p}</p>
-                  <AiBadge />
-                  <ReadingLevelToggle levels={arg.levels} defaultLevel="simple" />
-                  <CitationList citations={arg.citations} />
-                </div>
-              )
-            })}
           </div>
-        ) : (
-          !steelmanLoading && (
-            <p className="text-sm text-gray-400">
-              Generate the steelman arguments to see the strongest case for each side.
-            </p>
-          )
+        )}
+        {steelmanError && <ErrorBox message={steelmanError} />}
+        {steelman && steelman.initiator_argument && steelman.respondent_argument && (
+          <SteelmanView
+            initiator={{
+              ...steelman.initiator_argument,
+              role: caseData?.parties.initiator.role ?? 'tenant',
+            }}
+            respondent={{
+              ...steelman.respondent_argument,
+              role: caseData?.parties.respondent.role ?? 'landlord',
+            }}
+            commonGround={commonGround?.agreed}
+          />
         )}
       </section>
 
@@ -589,14 +586,18 @@ function FullCaseTab({
         <h3 className="font-semibold text-gray-800">Settlement draft</h3>
         {settlement ? (
           <div className="space-y-3">
-            <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-              <p className="text-xs font-semibold text-green-700 uppercase mb-2">
-                Draft settlement text
+            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
+              <p className="text-xs font-semibold text-emerald-700 uppercase mb-2">
+                Draft Settlement
               </p>
-              <p className="text-sm text-gray-700 whitespace-pre-wrap">{settlement.draft_text}</p>
+              <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
+                {settlement.document ?? settlement.draft_text}
+              </p>
             </div>
             {settlement.human_approved && (
-              <p className="text-xs text-green-600 font-medium">✓ Human approved</p>
+              <p className="text-xs text-emerald-600 font-semibold flex items-center gap-1">
+                <span>✓</span> Human approved
+              </p>
             )}
           </div>
         ) : (

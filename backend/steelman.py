@@ -115,12 +115,23 @@ def build_steelman_argument(
     levels = _build_steelman_levels(statutes, perspective, raw)
     lockbox = verify_citations(levels, raw["citations"])
 
+    # Logical fallacy / weakness detection via Gemini (graceful no-op if unconfigured)
+    fallacies: list[dict] = []
+    try:
+        from backend.legal_engine.gemini_client import detect_fallacies, is_configured
+        if is_configured() and statutes:
+            full_text = lockbox["clean_explanation"].get("full", "")
+            fallacies = detect_fallacies(full_text, statutes, perspective)
+    except Exception:
+        pass
+
     return {
         "levels": lockbox["clean_explanation"],
         "citations": raw["citations"],
         "unverified_removed": lockbox["removed"],
         "not_considered": NOT_CONSIDERED,
         "is_advice": False,
+        "fallacies": fallacies,
     }
 
 

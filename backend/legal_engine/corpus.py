@@ -1,6 +1,18 @@
-import re
+"""
+Statute corpus and retrieval.
+
+Production: Pinecone vector search (clause-ma-laws-3072) with Gemini embeddings.
+Fallback: local bag-of-words search over embedded MA statutes (for tests / offline).
+"""
+from __future__ import annotations
+
+import logging
 import math
+import os
+import re
 from typing import List, Dict
+
+logger = logging.getLogger(__name__)
 
 STATUTES = [
   {"id": "MGL_186_15B", "title": "Security deposits", "text": "No lessor may require a security deposit exceeding the amount of first month's rent..."},
@@ -27,15 +39,10 @@ STATUTES = [
 
 
 def _tokenize(text: str) -> List[str]:
-    """Lowercase and split text into word tokens."""
-    return re.findall(r'[a-z]+', text.lower())
+    return re.findall(r"[a-z]+", text.lower())
 
 
 def embed(text: str) -> Dict[str, float]:
-    """
-    Compute a simple bag-of-words TF vector (word-frequency dict normalized by L2 norm).
-    Returns a dict mapping word -> normalized frequency.
-    """
     tokens = _tokenize(text)
     if not tokens:
         return {}
@@ -44,7 +51,6 @@ def embed(text: str) -> Dict[str, float]:
     for token in tokens:
         freq[token] = freq.get(token, 0) + 1
 
-    # L2 normalize
     magnitude = math.sqrt(sum(v * v for v in freq.values()))
     if magnitude == 0:
         return {}
@@ -53,38 +59,52 @@ def embed(text: str) -> Dict[str, float]:
 
 
 def _cosine_sim(vec_a: Dict[str, float], vec_b: Dict[str, float]) -> float:
-    """Compute cosine similarity between two normalized TF vectors."""
     if not vec_a or not vec_b:
         return 0.0
-
-    dot_product = 0.0
-    for word, weight in vec_a.items():
-        if word in vec_b:
-            dot_product += weight * vec_b[word]
-
-    # Vectors are already L2-normalized, so cosine sim = dot product
-    return dot_product
+    return sum(weight * vec_b[word] for word, weight in vec_a.items() if word in vec_b)
 
 
-def retrieve(query: str, top_k: int = 3) -> List[Dict]:
-    """
-    Retrieve the top_k most relevant statutes for the given query
-    using cosine similarity on bag-of-words TF vectors.
-    """
+def retrieve_local(query: str, top_k: int = 3) -> List[Dict]:
+    """Bag-of-words fallback retrieval over embedded STATUTES."""
     query_vec = embed(query)
-
     if not query_vec:
-        # Return first top_k statutes if query is empty
         return STATUTES[:top_k]
 
     scored = []
     for statute in STATUTES:
         statute_text = statute["title"] + " " + statute["text"]
-        statute_vec = embed(statute_text)
-        score = _cosine_sim(query_vec, statute_vec)
+        score = _cosine_sim(query_vec, embed(statute_text))
         scored.append((score, statute))
 
-    # Sort by score descending
     scored.sort(key=lambda x: x[0], reverse=True)
-
     return [statute for _, statute in scored[:top_k]]
+
+
+def retrieve(query: str, top_k: int = 3) -> List[Dict]:
+    """
+    Retrieve top-k relevant MA statutes.
+    Uses Pinecone + Gemini embeddings when configured; falls back to local search.
+    """
+    use_pinecone = os.environ.get("MEDIUS_USE_PINECONE", "auto").lower()
+
+    if use_pinecone == "false":
+        return retrieve_local(query, top_k)
+
+    if use_pinecone == "true" or (
+        use_pinecone == "auto"
+        and os.environ.get("PINECONE_API_KEY")
+        and os.environ.get("GEMINI_API_KEY")
+    ):
+        try:
+            from backend.legal_engine.pinecone_retrieve import retrieve_from_pinecone
+
+            results = retrieve_from_pinecone(query, top_k=top_k)
+            if results:
+                return [
+                    {"id": r["id"], "title": r["title"], "text": r["text"]}
+                    for r in results
+                ]
+        except Exception as exc:
+            logger.warning("Pinecone retrieval failed, using local fallback: %s", exc)
+
+    return retrieve_local(query, top_k)

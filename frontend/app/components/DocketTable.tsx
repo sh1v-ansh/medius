@@ -24,54 +24,39 @@ export interface CaseRow {
   } | null
 }
 
-function UrgencyBadge({ score }: { score: number }) {
+const STATUS_STYLES: Record<string, string> = {
+  intake: 'bg-yellow-100 text-yellow-700 border-yellow-200',
+  informed: 'bg-blue-100 text-blue-700 border-blue-200',
+  negotiating: 'bg-violet-100 text-violet-700 border-violet-200',
+  escalated: 'bg-red-100 text-red-700 border-red-200',
+  settled: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+}
+
+function UrgencyDot({ score }: { score: number }) {
   const level = score >= 70 ? 'high' : score >= 40 ? 'medium' : 'low'
-  const styles = {
-    high: 'bg-red-100 text-red-700 border-red-200',
-    medium: 'bg-yellow-100 text-yellow-700 border-yellow-200',
-    low: 'bg-green-100 text-green-700 border-green-200',
-  }
+  const cls = { high: 'bg-red-500', medium: 'bg-amber-400', low: 'bg-emerald-500' }[level]
+  const label = { high: 'High', medium: 'Med', low: 'Low' }[level]
   return (
-    <span
-      className={`inline-block px-2 py-0.5 rounded text-xs font-medium border ${styles[level]}`}
-      data-testid="urgency-badge"
-    >
-      {level.charAt(0).toUpperCase() + level.slice(1)}
+    <span className="inline-flex items-center gap-1.5" data-testid="urgency-badge">
+      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${cls}`} />
+      <span className="text-xs text-slate-600 font-medium">{label}</span>
     </span>
   )
 }
 
-function AsymmetryFlag({
-  initiatorCounsel,
-  respondentCounsel,
-}: {
-  initiatorCounsel: boolean
-  respondentCounsel: boolean
-}) {
-  const isAsymmetric = initiatorCounsel !== respondentCounsel
-  if (!isAsymmetric) return null
+function CompositeBar({ value }: { value: number }) {
+  const pct = Math.min(100, Math.max(0, value))
+  const color = pct >= 70 ? 'bg-red-400' : pct >= 40 ? 'bg-amber-400' : 'bg-emerald-400'
   return (
-    <span
-      title="One party has legal counsel, the other does not"
-      data-testid="asymmetry-flag"
-      aria-label="Representation asymmetry"
-      className="text-amber-500"
-    >
-      ⚠️
-    </span>
+    <div className="flex items-center gap-2">
+      <div className="w-16 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+        <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
+      </div>
+      <span className="text-xs font-bold text-slate-700 tabular-nums">{value}</span>
+    </div>
   )
 }
 
-function ScorePill({ label, value }: { label: string; value: number }) {
-  return (
-    <span className="inline-flex flex-col items-center text-xs">
-      <span className="text-gray-400">{label}</span>
-      <span className="font-semibold text-gray-700">{value}</span>
-    </span>
-  )
-}
-
-/** Sort cases by triage composite score descending; cases without triage go last. */
 export function sortByComposite(cases: CaseRow[]): CaseRow[] {
   return [...cases].sort((a, b) => {
     const ca = a.triage?.composite ?? -1
@@ -84,72 +69,77 @@ export function DocketTable({ cases }: { cases: CaseRow[] }) {
   const sorted = sortByComposite(cases)
 
   if (sorted.length === 0) {
-    return (
-      <p className="text-gray-500 text-sm py-8 text-center">No cases in the docket.</p>
-    )
+    return <p className="text-slate-500 text-sm py-8 text-center">No cases in the docket.</p>
   }
 
   return (
     <div className="overflow-x-auto" data-testid="docket-table">
-      <table className="w-full text-sm border-collapse">
+      <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-gray-200 bg-gray-50">
-            <th className="text-left px-4 py-3 text-gray-600 font-medium">Case</th>
-            <th className="text-left px-4 py-3 text-gray-600 font-medium">Type</th>
-            <th className="text-left px-4 py-3 text-gray-600 font-medium">Status</th>
-            <th className="text-center px-4 py-3 text-gray-600 font-medium">Composite</th>
-            <th className="text-center px-4 py-3 text-gray-600 font-medium">Urgency</th>
-            <th className="text-center px-4 py-3 text-gray-600 font-medium">Power</th>
-            <th className="text-center px-4 py-3 text-gray-600 font-medium">Violation</th>
-            <th className="text-center px-4 py-3 text-gray-600 font-medium">Settlement</th>
-            <th className="text-center px-4 py-3 text-gray-600 font-medium">Flags</th>
+          <tr className="border-b border-slate-100 bg-slate-50">
+            {['Case ID', 'Parties', 'Status', 'Priority', 'Urgency', 'Power', 'Violation', 'Settlement', ''].map((h) => (
+              <th key={h} className="text-left px-4 py-3 text-xs font-bold text-slate-500 uppercase tracking-wide whitespace-nowrap">
+                {h}
+              </th>
+            ))}
           </tr>
         </thead>
-        <tbody>
+        <tbody className="divide-y divide-slate-100">
           {sorted.map((c) => {
             const scores = c.triage?.scores
+            const statusCls = STATUS_STYLES[c.status] ?? 'bg-slate-100 text-slate-600 border-slate-200'
+            const hasAsymmetry = c.parties.initiator.has_counsel !== c.parties.respondent.has_counsel
             return (
-              <tr
-                key={c.case_id}
-                className="border-b border-gray-100 hover:bg-blue-50 cursor-pointer transition-colors"
-                data-testid={`docket-row-${c.case_id}`}
-              >
-                <td className="px-4 py-3">
-                  <Link
-                    href={`/cases/${c.case_id}`}
-                    className="text-blue-600 hover:underline font-mono text-xs"
-                  >
+              <tr key={c.case_id} className="hover:bg-blue-50/40 transition-colors group" data-testid={`docket-row-${c.case_id}`}>
+                <td className="px-4 py-4">
+                  <Link href={`/cases/${c.case_id}`} className="font-mono text-xs text-blue-600 hover:underline font-semibold">
                     {c.case_id.slice(0, 8)}…
                   </Link>
+                  <p className="text-xs text-slate-400 mt-0.5">{new Date(c.created_at).toLocaleDateString()}</p>
                 </td>
-                <td className="px-4 py-3 capitalize text-gray-700">{c.type}</td>
-                <td className="px-4 py-3">
-                  <span className="capitalize text-gray-600">{c.status}</span>
+                <td className="px-4 py-4">
+                  <div className="space-y-0.5">
+                    <p className="text-xs font-semibold text-slate-700 capitalize">{c.parties.initiator.role}</p>
+                    <p className="text-xs text-slate-400">vs</p>
+                    <p className="text-xs font-semibold text-slate-700 capitalize">{c.parties.respondent.role}</p>
+                  </div>
                 </td>
-                <td className="px-4 py-3 text-center">
+                <td className="px-4 py-4">
+                  <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-semibold border capitalize ${statusCls}`}>
+                    {c.status}
+                  </span>
+                </td>
+                <td className="px-4 py-4">
                   {c.triage ? (
-                    <span className="font-bold text-gray-900">{c.triage.composite}</span>
+                    <CompositeBar value={c.triage.composite} />
                   ) : (
-                    <span className="text-gray-300">—</span>
+                    <span className="text-slate-300 text-xs">—</span>
                   )}
                 </td>
-                <td className="px-4 py-3 text-center">
-                  {scores ? <UrgencyBadge score={scores.urgency} /> : '—'}
+                <td className="px-4 py-4">
+                  {scores ? <UrgencyDot score={scores.urgency} /> : <span className="text-slate-300 text-xs">—</span>}
                 </td>
-                <td className="px-4 py-3 text-center">
-                  {scores ? <ScorePill label="PA" value={scores.power_asymmetry} /> : '—'}
+                <td className="px-4 py-4 text-xs text-slate-600 font-mono">
+                  {scores ? scores.power_asymmetry : '—'}
                 </td>
-                <td className="px-4 py-3 text-center">
-                  {scores ? <ScorePill label="VS" value={scores.violation_strength} /> : '—'}
+                <td className="px-4 py-4 text-xs text-slate-600 font-mono">
+                  {scores ? scores.violation_strength : '—'}
                 </td>
-                <td className="px-4 py-3 text-center">
-                  {scores ? <ScorePill label="SL" value={scores.settlement_likelihood} /> : '—'}
+                <td className="px-4 py-4 text-xs text-slate-600 font-mono">
+                  {scores ? scores.settlement_likelihood : '—'}
                 </td>
-                <td className="px-4 py-3 text-center">
-                  <AsymmetryFlag
-                    initiatorCounsel={c.parties.initiator.has_counsel}
-                    respondentCounsel={c.parties.respondent.has_counsel}
-                  />
+                <td className="px-4 py-4">
+                  <div className="flex items-center gap-2">
+                    {hasAsymmetry && (
+                      <span title="Representation asymmetry" data-testid="asymmetry-flag" className="text-amber-500 text-sm">⚠️</span>
+                    )}
+                    <Link
+                      href={`/cases/${c.case_id}?party=neutral`}
+                      className="text-xs text-blue-600 hover:underline font-semibold whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      Open →
+                    </Link>
+                  </div>
                 </td>
               </tr>
             )

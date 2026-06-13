@@ -1,15 +1,18 @@
 'use client'
 
-import { useState, useEffect, Suspense } from 'react'
+import { useEffect, useRef, useState, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import {
-  createCase,
-  getNextQuestion,
-  submitAnswer,
-  finishIntake,
-  type Question,
-} from '../lib/api'
+import { createCase, submitNarrative } from '../lib/api'
+
+type SttState = 'idle' | 'listening' | 'processing' | 'done'
+
+const FAKE_STT_SAMPLES = [
+  "I moved out on April 15th and it has now been over 60 days and I still have not received my $2,400 security deposit back. My landlord claims there was damage but never sent me an itemized list. I sent written notice asking for the deposit but got no response.",
+  "My landlord has been ignoring my repair requests for two months. The heating system broke down in January and I sent a written notice on January 8th. It is now mid-March and nothing has been fixed. The temperature has dropped below safe levels multiple times.",
+  "I received a verbal notice to leave from my landlord last Tuesday. He said I have two weeks to vacate but never provided anything in writing. My lease runs through September and I have always paid rent on time. I believe this is retaliation for reporting a code violation.",
+  "My landlord raised my rent by $500 per month with only one week of written notice. My lease says rent can only increase with 30 days notice. I have been a tenant for three years with no late payments and no complaints against me.",
+]
 
 const SUPPORTED_LANGUAGES = [
   { code: 'en', label: 'English' },
@@ -51,45 +54,34 @@ function StartPageInner() {
 
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1)
 
-  // Step 1 state
-  const [myRole, setMyRole] = useState<PartyRole>(
-    roleParam === 'respondent' ? 'landlord' : 'tenant',
-  )
+  const [myRole, setMyRole] = useState<PartyRole>(roleParam === 'respondent' ? 'landlord' : 'tenant')
   const [myLang, setMyLang] = useState('en')
-
-  // Step 2 state
   const [theirLang, setTheirLang] = useState('en')
   const [creatingCase, setCreatingCase] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
-
-  // Step 3 state (intake)
   const [caseId, setCaseId] = useState<string | null>(null)
-  const [party, setParty] = useState<'initiator' | 'respondent'>('initiator')
-  const [answers, setAnswers] = useState<Record<string, string>>({})
-  const [question, setQuestion] = useState<Question | null>(null)
-  const [questionDone, setQuestionDone] = useState(false)
-  const [questionLoading, setQuestionLoading] = useState(false)
-  const [questionError, setQuestionError] = useState<string | null>(null)
-  const [questionNum, setQuestionNum] = useState(0)
-  const [shortAnswerText, setShortAnswerText] = useState('')
-  const [finishingIntake, setFinishingIntake] = useState(false)
 
-  // Copy state for step 4
+  // Step 3 — free-form narrative
+  const [narrative, setNarrative] = useState('')
+  const [submittingNarrative, setSubmittingNarrative] = useState(false)
+  const [narrativeError, setNarrativeError] = useState<string | null>(null)
+  const [sttState, setSttState] = useState<SttState>('idle')
+  const sttTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Step 4
   const [copied, setCopied] = useState(false)
 
   const theirRole: PartyRole = myRole === 'tenant' ? 'landlord' : 'tenant'
+
+  useEffect(() => () => { if (sttTimer.current) clearTimeout(sttTimer.current) }, [])
 
   async function handleCreateCase() {
     setCreatingCase(true)
     setCreateError(null)
     try {
-      const initiatorRole = myRole
-      const respondentRole = theirRole
-      const data = await createCase(initiatorRole, myLang, respondentRole, theirLang)
+      const data = await createCase(myRole, myLang, theirRole, theirLang)
       setCaseId(data.case_id)
-      setParty('initiator')
       setStep(3)
-      loadNextQuestion({}, myLang, data.case_id, 'initiator')
     } catch (e) {
       setCreateError(e instanceof Error ? e.message : 'Failed to create case. Please try again.')
     } finally {
@@ -97,53 +89,32 @@ function StartPageInner() {
     }
   }
 
-  async function loadNextQuestion(
-    currentAnswers: Record<string, string>,
-    lang: string,
-    id: string,
-    partyName: string,
-  ) {
-    setQuestionLoading(true)
-    setQuestionError(null)
+  async function handleSubmitNarrative() {
+    if (!caseId || !narrative.trim()) return
+    setSubmittingNarrative(true)
+    setNarrativeError(null)
     try {
-      const result = await getNextQuestion(id, partyName, currentAnswers, lang)
-      setQuestionDone(result.done)
-      setQuestion(result.question ?? null)
-      if (result.done) {
-        handleFinishIntake(id, partyName)
-      }
-    } catch {
-      setQuestionError('Could not load next question. Please try again.')
-    } finally {
-      setQuestionLoading(false)
-    }
-  }
-
-  async function handleAnswer(value: string) {
-    if (!question || !caseId) return
-    const qId = question.id
-    const updated = { ...answers, [qId]: value }
-    setAnswers(updated)
-    setShortAnswerText('')
-    setQuestionNum((n) => n + 1)
-    try {
-      await submitAnswer(caseId, party, qId, value)
-    } catch {
-      // non-fatal; backend may also read from next-question answers
-    }
-    loadNextQuestion(updated, myLang, caseId, party)
-  }
-
-  async function handleFinishIntake(id: string, partyName: string) {
-    setFinishingIntake(true)
-    try {
-      await finishIntake(id, partyName)
-    } catch {
-      // non-fatal
-    } finally {
-      setFinishingIntake(false)
+      await submitNarrative(caseId, 'initiator', narrative.trim(), myLang)
       setStep(4)
+    } catch (e) {
+      setNarrativeError(e instanceof Error ? e.message : 'Failed to submit. Please try again.')
+    } finally {
+      setSubmittingNarrative(false)
     }
+  }
+
+  function handleMicClick() {
+    if (sttState !== 'idle') return
+    setSttState('listening')
+    sttTimer.current = setTimeout(() => {
+      setSttState('processing')
+      setTimeout(() => {
+        const sample = FAKE_STT_SAMPLES[Math.floor(Math.random() * FAKE_STT_SAMPLES.length)]
+        setNarrative((prev) => prev ? prev + '\n\n' + sample : sample)
+        setSttState('done')
+        setTimeout(() => setSttState('idle'), 1500)
+      }, 1200)
+    }, 2800)
   }
 
   function handleCopyLink() {
@@ -189,7 +160,7 @@ function StartPageInner() {
           <p className="text-xs text-gray-500 text-center">
             {step === 1 && 'Your role'}
             {step === 2 && 'Other party'}
-            {step === 3 && 'Intake questions'}
+            {step === 3 && 'Your statement'}
             {step === 4 && 'Case created'}
           </p>
         </div>
@@ -343,129 +314,107 @@ function StartPageInner() {
           </div>
         )}
 
-        {/* Step 3: Intake questions */}
+        {/* Step 3: Free-form narrative */}
         {step === 3 && (
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 space-y-6">
             <div>
               <h1 className="text-2xl font-bold text-gray-900 mb-1">
-                Answer a few questions
+                Tell us your side of the story
               </h1>
-              <div className="flex items-center gap-3 mt-2">
-                <div className="flex-1 bg-gray-100 rounded-full h-2">
-                  <div
-                    className="bg-blue-600 h-2 rounded-full transition-all"
-                    style={{ width: `${Math.min((questionNum / 10) * 100, 95)}%` }}
-                  />
+              <p className="text-sm text-gray-500">
+                Speak or type in your own words — as {myLang !== 'en' ? 'your language' : 'plain English'} as you like.
+                The more detail you give, the better the AI analysis will be.
+              </p>
+            </div>
+
+            {/* Prompts */}
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                '📅 When did this happen?',
+                '💰 Dollar amounts involved?',
+                '📝 Was anything in writing?',
+                '🔔 Did you give or receive notice?',
+              ].map((p) => (
+                <div key={p} className="bg-slate-50 rounded-lg px-3 py-2 text-xs text-slate-600 border border-slate-100">
+                  {p}
                 </div>
-                <span className="text-xs text-gray-500 whitespace-nowrap">
-                  {questionNum} / ~10
+              ))}
+            </div>
+
+            {/* STT + textarea */}
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleMicClick}
+                  disabled={sttState !== 'idle' && sttState !== 'done'}
+                  className={`relative flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all ${
+                    sttState === 'listening' ? 'bg-red-500 text-white shadow-lg shadow-red-200' :
+                    sttState === 'processing' ? 'bg-amber-500 text-white' :
+                    sttState === 'done' ? 'bg-emerald-500 text-white' :
+                    'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                  }`}
+                >
+                  {sttState === 'listening' && (
+                    <span className="absolute inset-0 rounded-xl animate-ping bg-red-400 opacity-40" />
+                  )}
+                  <span className="relative">
+                    {sttState === 'idle' && '🎙'}
+                    {sttState === 'listening' && '⏺'}
+                    {sttState === 'processing' && '⏳'}
+                    {sttState === 'done' && '✓'}
+                  </span>
+                  <span className="relative">
+                    {sttState === 'idle' && 'Speak your story'}
+                    {sttState === 'listening' && 'Listening…'}
+                    {sttState === 'processing' && 'Transcribing…'}
+                    {sttState === 'done' && 'Added!'}
+                  </span>
+                </button>
+                <span className="text-xs text-slate-400">Works in 10+ languages</span>
+              </div>
+
+              <textarea
+                value={narrative}
+                onChange={(e) => setNarrative(e.target.value)}
+                placeholder={`Describe what happened in your own words. For example:\n\n"I moved out on April 15th and it's been 60 days and my landlord hasn't returned my $2,400 security deposit. They claimed there was damage but never sent me an itemized list…"`}
+                rows={9}
+                className="w-full border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 resize-none focus:outline-none focus:ring-2 focus:ring-blue-400 leading-relaxed"
+              />
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-slate-400">
+                  {narrative.trim().split(/\s+/).filter(Boolean).length} words
+                  {narrative.trim().split(/\s+/).filter(Boolean).length < 30 && narrative.trim().length > 0
+                    ? ' — more detail helps the AI' : ''}
                 </span>
+                <span className="text-xs text-slate-400">Your name and address are removed before analysis.</span>
               </div>
             </div>
 
-            {questionLoading || finishingIntake ? (
-              <div className="flex items-center gap-3 py-8 justify-center text-gray-500">
-                <Spinner />
-                <span className="text-sm">
-                  {finishingIntake ? 'Finishing intake…' : 'Loading question…'}
-                </span>
-              </div>
-            ) : questionError ? (
-              <div className="space-y-3">
-                <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
-                  {questionError}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => loadNextQuestion(answers, myLang, caseId!, party)}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700"
-                >
-                  Try again
-                </button>
-              </div>
-            ) : questionDone ? (
-              <div className="text-center py-8 space-y-3">
-                <div className="text-5xl">✅</div>
-                <p className="text-green-700 font-semibold">Intake complete. Thank you!</p>
-                <p className="text-sm text-gray-500">Setting up your case…</p>
-              </div>
-            ) : question ? (
-              <div className="space-y-4">
-                <p className="text-base font-medium text-gray-800 leading-relaxed">
-                  {question.text}
-                </p>
-                {question.original_text && question.original_text !== question.text && (
-                  <p className="text-xs text-gray-400 italic">({question.original_text})</p>
-                )}
-
-                {question.type === 'yes_no' && (
-                  <div className="flex gap-3">
-                    <button
-                      type="button"
-                      onClick={() => handleAnswer('yes')}
-                      className="flex-1 py-3 rounded-xl border-2 border-gray-200 text-gray-700 font-medium text-sm hover:border-blue-400 hover:bg-blue-50 transition-colors"
-                    >
-                      Yes
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleAnswer('no')}
-                      className="flex-1 py-3 rounded-xl border-2 border-gray-200 text-gray-700 font-medium text-sm hover:border-blue-400 hover:bg-blue-50 transition-colors"
-                    >
-                      No
-                    </button>
-                  </div>
-                )}
-
-                {question.type === 'choice' && question.choices && (
-                  <div className="space-y-2">
-                    {question.choices.map((choice, i) => (
-                      <button
-                        key={i}
-                        type="button"
-                        onClick={() =>
-                          handleAnswer(
-                            question.original_choices ? question.original_choices[i] : choice,
-                          )
-                        }
-                        className="w-full text-left px-4 py-3 rounded-xl border-2 border-gray-200 text-sm text-gray-700 hover:border-blue-400 hover:bg-blue-50 transition-colors"
-                      >
-                        {choice}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                {question.type === 'short_answer' && (
-                  <form
-                    onSubmit={(e) => {
-                      e.preventDefault()
-                      if (shortAnswerText.trim()) handleAnswer(shortAnswerText.trim())
-                    }}
-                    className="space-y-3"
-                  >
-                    <input
-                      type="text"
-                      value={shortAnswerText}
-                      onChange={(e) => setShortAnswerText(e.target.value)}
-                      placeholder="Your answer…"
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                    />
-                    <button
-                      type="submit"
-                      disabled={!shortAnswerText.trim()}
-                      className="w-full bg-blue-600 text-white font-semibold py-2 rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50 transition-colors"
-                    >
-                      Next →
-                    </button>
-                  </form>
-                )}
-              </div>
-            ) : (
-              <div className="text-center py-8 text-gray-400 text-sm">
-                Preparing questions…
+            {narrativeError && (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
+                {narrativeError}
               </div>
             )}
+
+            <div className="flex gap-3">
+              <button type="button" onClick={() => setStep(2)}
+                className="px-4 py-2 border border-slate-300 rounded-xl text-slate-700 text-sm hover:bg-slate-50 transition-colors">
+                ← Back
+              </button>
+              <button
+                type="button"
+                onClick={handleSubmitNarrative}
+                disabled={narrative.trim().length < 20 || submittingNarrative}
+                className="flex-1 bg-blue-600 text-white font-semibold py-3 rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {submittingNarrative ? (
+                  <><Spinner /> Submitting…</>
+                ) : (
+                  'Submit my statement →'
+                )}
+              </button>
+            </div>
           </div>
         )}
 
@@ -507,7 +456,7 @@ function StartPageInner() {
                 </button>
               </div>
               <p className="text-xs text-blue-700">
-                They can answer their own intake questions and respond in their language.
+                They can submit their own statement and respond in their language.
               </p>
             </div>
 

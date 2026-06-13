@@ -47,7 +47,7 @@ def _fresh():
 
 def test_translate_returns_non_empty_translated_text_and_echoes_original():
     _fresh()
-    with patch("backend.translate.translate_with_claude", return_value="Hola mundo"):
+    with patch("backend.translate.translate_with_gemini", return_value="Hola mundo"):
         r = client.post("/translate", json={"text": "Hello world", "target_lang": "es"})
     assert r.status_code == 200
     data = r.json()
@@ -59,7 +59,7 @@ def test_translate_returns_non_empty_translated_text_and_echoes_original():
 
 def test_translate_caches_and_does_not_call_claude_twice():
     _fresh()
-    with patch("backend.translate.translate_with_claude", return_value="Bonjour") as mock_t:
+    with patch("backend.translate.translate_with_gemini", return_value="Bonjour") as mock_t:
         client.post("/translate", json={"text": "Hello cache", "target_lang": "fr"})
         r = client.post("/translate", json={"text": "Hello cache", "target_lang": "fr"})
     assert r.status_code == 200
@@ -105,7 +105,7 @@ def test_translated_thread_messages_labeled_machine_translation():
     """Translated messages appear with is_machine_translation=True when viewer_lang differs."""
     case_id, _ = _make_case_with_delivered_message()
 
-    with patch("backend.translate.translate_with_claude", return_value="Resolvamos este asunto."):
+    with patch("backend.translate.translate_with_gemini", return_value="Resolvamos este asunto."):
         r = client.get(f"/cases/{case_id}/messages?viewer_lang=es")
 
     assert r.status_code == 200
@@ -145,7 +145,7 @@ def test_intake_questions_render_in_selected_language_mock():
     case_id = r.json()["case_id"]
 
     with patch(
-        "backend.translate.translate_with_claude",
+        "backend.translate.translate_with_gemini",
         side_effect=lambda text, lang: f"[{lang}] {text}",
     ):
         r2 = client.post(

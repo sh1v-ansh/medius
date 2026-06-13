@@ -99,9 +99,16 @@ export interface TriageResult {
   explanation: string
 }
 
+export interface Fallacy {
+  type: string
+  description: string
+  severity: 'minor' | 'notable'
+}
+
 export interface SteelmanArgument {
   levels: { simple: string; standard: string; full: string }
   citations: Citation[]
+  fallacies?: Fallacy[]
 }
 
 export interface SteelmanResult {
@@ -129,7 +136,8 @@ export interface EscalationResult {
 }
 
 export interface SettlementResult {
-  draft_text: string
+  document: string      // backend field name
+  draft_text?: string   // alias
   agreed_terms: string[]
   human_approved: boolean
 }
@@ -145,7 +153,8 @@ export interface AuditEntry {
 
 export interface TranslationResult {
   original: string
-  translation: string
+  translated: string   // backend field name
+  translation?: string // alias for convenience
   target_lang: string
 }
 
@@ -201,7 +210,7 @@ async function apiFetch<T>(
   return res.json() as Promise<T>
 }
 
-// POST /cases
+// POST /cases  — backend expects { type, parties: { initiator, respondent } }
 export async function createCase(
   initiatorRole: string,
   initiatorLang: string,
@@ -212,10 +221,11 @@ export async function createCase(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      initiator_role: initiatorRole,
-      initiator_lang: initiatorLang,
-      respondent_role: respondentRole,
-      respondent_lang: respondentLang,
+      type: 'housing',
+      parties: {
+        initiator: { role: initiatorRole, language: initiatorLang, has_counsel: false },
+        respondent: { role: respondentRole, language: respondentLang, has_counsel: false },
+      },
     }),
   })
 }
@@ -261,15 +271,27 @@ export async function submitAnswer(
   })
 }
 
-// POST /cases/{id}/intake/finish
+// POST /cases/{id}/intake/finish  — backend expects query param ?party=
 export async function finishIntake(
   caseId: string,
   party: string,
 ): Promise<{ ok: boolean }> {
-  return apiFetch<{ ok: boolean }>(`/cases/${caseId}/intake/finish`, {
+  return apiFetch<{ ok: boolean }>(`/cases/${caseId}/intake/finish?party=${encodeURIComponent(party)}`, {
+    method: 'POST',
+  })
+}
+
+// POST /cases/{id}/intake/narrative  — free-form story input
+export async function submitNarrative(
+  caseId: string,
+  party: 'initiator' | 'respondent',
+  narrative: string,
+  language: string = 'en',
+): Promise<{ ok: boolean; narrative: string }> {
+  return apiFetch<{ ok: boolean; narrative: string }>(`/cases/${caseId}/intake/narrative`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ party }),
+    body: JSON.stringify({ party, narrative, language }),
   })
 }
 

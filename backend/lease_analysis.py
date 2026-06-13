@@ -375,19 +375,21 @@ def _extract_key_terms(text: str) -> dict[str, str]:
     t = text.lower()
     terms: dict[str, str] = {}
 
-    # Monthly rent
+    # Monthly rent — keep keyword-to-$ gap short to avoid cross-document false matches
     m = re.search(
-        r"(?:monthly rent|rent.*?is|rent.*?shall be|base rent)[^\$]*\$\s*([\d,]+)",
+        r"(?:monthly rent|base rent|rent payable|rent is|rent shall be)[^\$]{0,150}\$\s*([\d,]+)",
         t,
     ) or re.search(r"\$\s*([\d,]+)\s*(?:per month|/month|monthly)", t)
     if m:
-        terms["monthly_rent"] = f"${m.group(1).replace(',', '')}"
+        amount = m.group(1).replace(",", "")
+        if amount.isdigit() and int(amount) <= 100_000:
+            terms["monthly_rent"] = f"${amount}"
 
     # Security deposit
     m = re.search(
-        r"security deposit[^\$]*\$\s*([\d,]+)",
+        r"security deposit[^\$]{0,80}\$\s*([\d,]+)",
         t,
-    ) or re.search(r"\$\s*([\d,]+)\s*(?:security deposit|as.*?security)", t)
+    ) or re.search(r"\$\s*([\d,]+)[^\$]{0,40}(?:security deposit|as.*?security)", t)
     if m:
         terms["security_deposit"] = f"${m.group(1).replace(',', '')}"
 
@@ -479,8 +481,21 @@ def analyze_lease(text: str) -> dict[str, Any]:
     found_issues: list[dict[str, Any]] = []
 
     for issue in _ISSUES:
-        matched = any(re.search(pat, t_lower) for pat in issue["patterns"])
-        if matched:
+        matched_excerpt = ""
+        for pat in issue["patterns"]:
+            m = re.search(pat, t_lower)
+            if m:
+                # Return surrounding original-case text (not lowercased)
+                ctx_start = max(0, m.start() - 60)
+                ctx_end = min(len(text), m.end() + 180)
+                excerpt = text[ctx_start:ctx_end].strip()
+                # Trim to sentence boundaries where possible
+                if ctx_start > 0 and not excerpt[0].isupper():
+                    sp = excerpt.find(' ')
+                    excerpt = ("…" + excerpt[sp:]) if sp != -1 else ("…" + excerpt)
+                matched_excerpt = excerpt
+                break
+        if matched_excerpt:
             stat_id = issue["statute"]
             stat = _STATUTES.get(stat_id, {})
             found_issues.append({
@@ -492,6 +507,7 @@ def analyze_lease(text: str) -> dict[str, Any]:
                 "flag": issue["flag"],
                 "plain": issue["plain"],
                 "remedy": issue["remedy"],
+                "matched_excerpt": matched_excerpt,
             })
 
     # Deposit amount check
@@ -535,49 +551,27 @@ def analyze_lease(text: str) -> dict[str, Any]:
     }
 
 
-# ── Sample lease for hackathon demo ──────────────────────────────────────────
+# ── Sample lease for demo ─────────────────────────────────────────────────────
 
-SAMPLE_LEASE = """
+from pathlib import Path
+
+_SAMPLE_LEASE_PATH = Path(__file__).resolve().parent.parent / "sample-lease.pdf"
+
+# Minimal fallback if PDF is missing (e.g. CI without the file)
+_FALLBACK_SAMPLE_LEASE = """
 RESIDENTIAL LEASE AGREEMENT — MASSACHUSETTS
-
-This lease is entered into on September 1, 2024 between John Smith (Landlord)
-and Jane Doe (Tenant) for the premises at 123 Main St, Apt 4B, Boston, MA 02101.
-
-TERM: The tenancy commences on September 1, 2024 and expires on August 31, 2025,
-unless extended by mutual written agreement.
-
-RENT: Monthly rent is $2,000 per month, due on the first of each month.
-
-SECURITY DEPOSIT: Tenant shall pay a security deposit of $4,000 upon signing.
-The security deposit shall bear no interest. The landlord may retain the security
-deposit and tenant hereby waives any right to its return upon any breach of this lease.
-
-LAST MONTH'S RENT: Tenant shall pay last month's rent of $2,000 upon signing.
-No interest shall be paid on last month's rent.
-
-ENTRY: Landlord reserves the right to enter the premises at any time without
-prior notice for inspection or any other reason at landlord's sole discretion.
-
-REPAIRS: Tenant accepts the premises in as-is condition and is responsible for
-all repairs and maintenance during the tenancy. Landlord makes no warranty of
-habitability. Tenant waives any warranty of habitability claim.
-
-LATE FEE: A late fee of 15% of monthly rent will be charged for any rent received
-after the 5th of the month.
-
-UTILITIES: Tenant is responsible for all utilities.
-
-PETS: No pets permitted.
-
-TERMINATION: Landlord may change the locks and remove tenant's belongings if
-tenant fails to pay rent for more than 5 days. Tenant agrees to waive any right
-to bring legal action against landlord in court; all disputes shall be resolved
-through binding arbitration only.
-
-AUTO-RENEWAL: This lease shall automatically renew for successive one-year terms
-unless either party provides 30 days written notice before the expiration date.
-
-SUBLETTING: No subletting permitted without landlord's written consent.
-
-Signed: __________________    Date: ___________
+Monthly rent is $2,000 per month. Security deposit of $4,000.
+Tenant accepts premises AS IS. Landlord may enter at any time without notice.
 """
+
+
+def get_sample_lease_text() -> str:
+    """Load demo lease text from sample-lease.pdf at project root."""
+    if _SAMPLE_LEASE_PATH.exists():
+        from backend.legal_engine.pdf_text import extract_pdf_text
+
+        return extract_pdf_text(_SAMPLE_LEASE_PATH)
+    return _FALLBACK_SAMPLE_LEASE
+
+
+SAMPLE_LEASE = get_sample_lease_text()

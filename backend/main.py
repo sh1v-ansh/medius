@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Literal, Optional
+
+from dotenv import load_dotenv
+
+load_dotenv(override=False)
+
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from backend.models import Case, CaseCreate, CasePatch
@@ -160,6 +165,42 @@ async def intake_answer(
     return {"question_id": question_id, "recorded": resolved_answer}
 
 
+class NarrativeRequest(BaseModel):
+    party: Literal["initiator", "respondent"]
+    narrative: str
+    language: str = "en"
+
+
+@app.post("/cases/{case_id}/intake/narrative")
+def intake_narrative(case_id: str, payload: NarrativeRequest) -> Any:
+    """
+    Accept a free-form narrative directly from a party (bypasses Q&A intake).
+    Sets parties[party].narrative and marks intake as complete for that party.
+    """
+    case = get_case(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+    if not payload.narrative.strip():
+        raise HTTPException(status_code=422, detail="Narrative cannot be empty")
+
+    party = payload.party
+    # Store narrative
+    case["parties"][party]["narrative"] = payload.narrative.strip()
+    # Store language preference so briefing can respond in the right language
+    case["parties"][party]["language"] = payload.language
+    # Mark doc_source so downstream briefing knows it's a direct narrative
+    case["parties"][party]["doc_source"] = "narrative"
+    # Stamp into intake answers so existing briefing path still works
+    case["intake"][party]["answers"]["q_describe_other"] = payload.narrative.strip()
+    case["intake"][party]["answers"]["q_dispute_type"] = "Other"
+    case["intake"][party]["transcript"] = payload.narrative.strip()
+
+    audit_log(case_id, actor="human", action="narrative_submitted",
+              ai_suggestion=None, human_decision=payload.narrative[:300])
+    save_case(case)
+    return {"ok": True, "narrative": payload.narrative.strip()}
+
+
 @app.post("/cases/{case_id}/intake/finish")
 def intake_finish(case_id: str, party: Literal["initiator", "respondent"]) -> Any:
     """
@@ -224,7 +265,8 @@ def create_briefing(case_id: str, party: Literal["initiator", "respondent"]) -> 
         raise HTTPException(status_code=422, detail="No intake text found — complete intake first")
 
     perspective = case["parties"][party].get("role", party)
-    briefing = produce_briefing(source_text, perspective)
+    target_lang = case["parties"][party].get("language", "en")
+    briefing = produce_briefing(source_text, perspective, target_lang=target_lang)
 
     case["briefings"][party] = briefing
     save_case(case)
@@ -671,8 +713,8 @@ def analyze_lease_endpoint(case_id: str, party: Literal["initiator", "respondent
     result["demo_mode"] = demo_mode
     if demo_mode:
         result["demo_notice"] = (
-            "No lease document has been uploaded yet. "
-            "Showing analysis of a sample lease with intentional violations for demonstration."
+            "Analyzing the demo lease (sample-lease.pdf) — a Swampscott, MA commercial lease template. "
+            "Upload your own lease to analyze a specific document."
         )
 
     case["lease_analysis"] = result
@@ -695,7 +737,12 @@ def analyze_lease_endpoint(case_id: str, party: Literal["initiator", "respondent
 
 @app.get("/lease-analysis/sample")
 def get_sample_lease() -> Any:
-    """Return analysis of the built-in sample MA lease (hackathon demo)."""
-    result = analyze_lease(SAMPLE_LEASE)
+    """Return analysis of sample-lease.pdf (demo)."""
+    from backend.lease_analysis import get_sample_lease_text
+
+    result = analyze_lease(get_sample_lease_text())
     result["demo_mode"] = True
+    result["demo_notice"] = (
+        "Demo analysis of sample-lease.pdf — Swampscott, MA lease template."
+    )
     return result

@@ -8,6 +8,8 @@ dist/
 build/
 .env
 *.egg
+.venv/
+venv/
 
 # Node / Next.js
 frontend/node_modules/

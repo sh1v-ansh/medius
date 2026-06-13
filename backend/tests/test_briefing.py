@@ -199,7 +199,7 @@ def test_redact_runs_before_analyze():
         call_order.append("redact")
         return text.replace("john.smith@email.com", "[REDACTED]")
 
-    def fake_analyze(text: str, perspective: str) -> dict:
+    def fake_analyze(text: str, perspective: str, target_lang: str = "en") -> dict:
         call_order.append("analyze")
         # Confirm the text arriving at analyze has already been redacted
         assert "john.smith@email.com" not in text, "PII reached analyze() before redaction"

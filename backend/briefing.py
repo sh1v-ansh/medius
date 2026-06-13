@@ -73,35 +73,28 @@ def _build_levels(
     perspective: str,
     raw_analyze: dict[str, Any],
 ) -> dict[str, str]:
-    """Return three reading levels from analysis output."""
-    titles = ", ".join(s["title"] for s in statutes)
-    ids = ", ".join(s["id"] for s in statutes)
-
-    simple = (
-        f"Here is what the law says about your situation as a {perspective}:\n"
-        f"The rules cover: {titles}.\n"
-        f"This is information about the law — not advice about what to do. "
-        f"A person will always help you decide next steps."
-    )
-
-    standard = (
-        f"As the {perspective}, Massachusetts law addresses your situation through "
-        f"the following statutes: {titles} ({ids}).\n"
-        f"{raw_analyze['explanation']['standard']}\n"
-        f"This is information, not legal advice. A human mediator reviews all decisions."
-    )
-
-    # Full level: verbatim statute text per retrieved statute
+    """Return three reading levels from Gemini or template analysis output."""
+    expl = raw_analyze.get("explanation", {})
     statute_blocks = "\n\n".join(
         f"[{s['id']}] {s['title']}\n{s['text']}"
         for s in statutes
     )
-    full = (
-        f"PERSPECTIVE: {perspective}\n\n"
-        f"RETRIEVED STATUTES (verbatim):\n{statute_blocks}\n\n"
-        f"SCOPE DISCLOSURE: {'; '.join(NOT_CONSIDERED)}\n\n"
-        f"This output is information only and does not constitute legal advice."
+
+    simple = expl.get("simple") or (
+        f"Here is what the law says about your situation as a {perspective}."
     )
+    standard = expl.get("standard") or expl.get("simple", "")
+    full = expl.get("full") or ""
+
+    # Always append verbatim statutes + scope disclosure to full level
+    if statute_blocks and statute_blocks[:30] not in full:
+        full = (
+            f"PERSPECTIVE: {perspective}\n\n"
+            f"RETRIEVED STATUTES (verbatim):\n{statute_blocks}\n\n"
+            f"{full}\n\n"
+            f"SCOPE DISCLOSURE: {'; '.join(NOT_CONSIDERED)}\n\n"
+            f"This output is information only and does not constitute legal advice."
+        )
 
     return {"simple": simple, "standard": standard, "full": full}
 
@@ -167,12 +160,23 @@ def build_what_this_means(
     statutes: list[dict[str, Any]],
     document_text: str,
     perspective: str,
+    target_lang: str = "en",
 ) -> dict[str, Any]:
+    # Try Gemini-generated WTMFM when configured
+    try:
+        from backend.legal_engine.gemini_client import generate_wtmfm, is_configured
+
+        if is_configured() and statutes:
+            gemini_wtm = generate_wtmfm(document_text, perspective, statutes, target_lang=target_lang)
+            if gemini_wtm:
+                gemini_wtm["what_law_says"] = _sanitize_for_wtmfm(gemini_wtm["what_law_says"])
+                return gemini_wtm
+    except Exception:
+        pass
+
     dispute_type = _detect_dispute_type(document_text)
     options = _OPTIONS_BY_TYPE.get(dispute_type, _OPTIONS_BY_TYPE["default"])
 
-    # What the law says: describe the statute requirement + whether described facts appear to match.
-    # Never predict outcome; never say "you should".
     law_lines = []
     for s in statutes:
         law_lines.append(f"• {s['title']} ({s['id']}): {s['text']}")
@@ -202,6 +206,7 @@ def build_what_this_means(
 def produce_briefing(
     document_text: str,
     perspective: str,
+    target_lang: str = "en",
 ) -> dict[str, Any]:
     """
     Full briefing pipeline:
@@ -213,7 +218,7 @@ def produce_briefing(
       6. scope disclosure
     """
     clean_text = redact(document_text)
-    raw = analyze(clean_text, perspective)
+    raw = analyze(clean_text, perspective, target_lang=target_lang)
 
     statutes = [
         {"id": c["statute_id"], "title": _statute_title(c["statute_id"]), "text": c["statute_text"]}
@@ -223,7 +228,7 @@ def produce_briefing(
     levels = _build_levels(statutes, perspective, raw)
     lockbox = verify_citations(levels, raw["citations"])
 
-    what_this_means = build_what_this_means(statutes, clean_text, perspective)
+    what_this_means = build_what_this_means(statutes, clean_text, perspective, target_lang=target_lang)
 
     return {
         "levels": lockbox["clean_explanation"],
@@ -236,9 +241,13 @@ def produce_briefing(
 
 
 def _statute_title(statute_id: str) -> str:
-    """Resolve a statute ID to its title from the corpus."""
+    """Resolve a statute ID to its title from the local corpus or format the ID."""
     from backend.legal_engine.corpus import STATUTES
     for s in STATUTES:
         if s["id"] == statute_id:
             return s["title"]
+    # Pinecone IDs like MGL_186_15B — humanize for display
+    parts = statute_id.replace("MGL_", "").split("_", 1)
+    if len(parts) == 2:
+        return f"M.G.L. c.{parts[0]} §{parts[1]}"
     return statute_id
