@@ -6,6 +6,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from backend.models import Case, CaseCreate, CasePatch
 from backend.storage import get_case, read_cases, save_case
+from backend.translate import get_or_create_translation
 from backend.audit import get_audit, log as audit_log
 from backend.intake import (
     next_question,
@@ -81,6 +82,7 @@ def read_case_audit(case_id: str) -> Any:
 class IntakeNextRequest(BaseModel):
     party: Literal["initiator", "respondent"]
     answers: dict[str, Any] = {}
+    lang: str = "en"
 
 
 class IntakeAnswerRequest(BaseModel):
@@ -91,7 +93,7 @@ class IntakeAnswerRequest(BaseModel):
 
 @app.post("/cases/{case_id}/intake/next")
 def intake_next(case_id: str, payload: IntakeNextRequest) -> Any:
-    """Return the next question given answers collected so far."""
+    """Return the next question given answers collected so far, optionally translated."""
     case = get_case(case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
@@ -99,6 +101,17 @@ def intake_next(case_id: str, payload: IntakeNextRequest) -> Any:
     question = next_question(payload.answers)
     if question is None:
         return {"done": True, "question": None}
+
+    if payload.lang and payload.lang != "en":
+        question = dict(question)
+        question["original_text"] = question["text"]
+        question["text"] = get_or_create_translation(question["text"], payload.lang)
+        if "choices" in question:
+            question["original_choices"] = question["choices"]
+            question["choices"] = [
+                get_or_create_translation(c, payload.lang) for c in question["choices"]
+            ]
+
     return {"done": False, "question": question}
 
 
@@ -445,15 +458,36 @@ def approve_message(case_id: str, msg_id: str, payload: ApproveRequest) -> Any:
 
 
 @app.get("/cases/{case_id}/messages")
-def list_messages(case_id: str, party: Optional[str] = None) -> Any:
+def list_messages(
+    case_id: str,
+    party: Optional[str] = None,
+    viewer_lang: Optional[str] = None,
+) -> Any:
     """
-    Returns only DELIVERED messages — pending_approval drafts are never
-    included here (they are visible only to the sender via /messages/draft).
+    Returns only DELIVERED messages. When viewer_lang is set and differs from
+    the sender's language, each message gains a 'translation' field and
+    'is_machine_translation: true' — labeled for the viewer, never modifying
+    the stored content.
     """
     case = get_case(case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
-    return case["negotiation"]["messages"]
+
+    messages = case["negotiation"]["messages"]
+
+    if not viewer_lang:
+        return messages
+
+    augmented = []
+    for msg in messages:
+        msg = dict(msg)
+        sender = msg.get("sender", "initiator")
+        sender_lang = case["parties"].get(sender, {}).get("language", "en")
+        if sender_lang != viewer_lang and msg.get("content"):
+            msg["translation"] = get_or_create_translation(msg["content"], viewer_lang)
+            msg["is_machine_translation"] = True
+        augmented.append(msg)
+    return augmented
 
 
 @app.post("/cases/{case_id}/common-ground")
@@ -584,3 +618,30 @@ async def intake_upload_doc(
     save_case(case)
 
     return {"doc_source": doc_source, "extracted_length": len(extracted_text)}
+
+
+# ── Translation ───────────────────────────────────────────────────────────────
+
+class TranslateRequest(BaseModel):
+    text: str
+    target_lang: str
+
+
+@app.post("/translate")
+def translate(payload: TranslateRequest) -> Any:
+    """
+    Translate text to target_lang via Claude (cache-first).
+    Returns the original and the translation — translation never alters meaning
+    or makes decisions; it is purely for accessibility.
+    """
+    if not payload.text.strip():
+        raise HTTPException(status_code=422, detail="text must not be empty")
+    if not payload.target_lang.strip():
+        raise HTTPException(status_code=422, detail="target_lang must not be empty")
+
+    translated = get_or_create_translation(payload.text.strip(), payload.target_lang.strip())
+    return {
+        "original": payload.text.strip(),
+        "translated": translated,
+        "target_lang": payload.target_lang.strip(),
+    }

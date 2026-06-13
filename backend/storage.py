@@ -8,6 +8,7 @@ from typing import Any
 DATA_DIR = Path(__file__).parent.parent / "data"
 CASES_FILE = DATA_DIR / "cases.json"
 AUDIT_FILE = DATA_DIR / "audit.json"
+TRANSLATIONS_FILE = DATA_DIR / "translations.json"
 
 
 def _ensure_dir() -> None:
@@ -69,3 +70,29 @@ def append_audit(entry: dict[str, Any]) -> None:
 
 def get_case_audit(case_id: str) -> list[dict[str, Any]]:
     return [e for e in read_audit() if e.get("case_id") == case_id]
+
+
+# ── Translation cache ────────────────────────────────────────────────────────
+
+def _read_dict(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    with open(path) as f:
+        return json.load(f)
+
+
+def _write_dict(path: Path, data: dict[str, str]) -> None:
+    _ensure_dir()
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+def get_cached_translation(text: str, target_lang: str) -> str | None:
+    cache = _read_dict(TRANSLATIONS_FILE)
+    return cache.get(f"{target_lang}:{text}")
+
+
+def save_cached_translation(text: str, target_lang: str, translated: str) -> None:
+    cache = _read_dict(TRANSLATIONS_FILE)
+    cache[f"{target_lang}:{text}"] = translated
+    _write_dict(TRANSLATIONS_FILE, cache)

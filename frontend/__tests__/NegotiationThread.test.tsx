@@ -193,3 +193,65 @@ describe('NegotiationThread', () => {
     await waitFor(() => expect(onApprove).toHaveBeenCalledWith(approved))
   })
 })
+
+describe('NegotiationThread — machine translation (Phase 10)', () => {
+  function makeTranslatedMsg(senderLang = 'es') {
+    return {
+      msg_id: 'trans-001',
+      sender: 'respondent',
+      original: 'Resolvamos este asunto.',
+      rewrite: 'Resolvamos este asunto.',
+      content: 'Resolvamos este asunto.',
+      tone: 'neutral',
+      empathy_ack: '',
+      status: 'delivered' as const,
+      is_machine_translation: true,
+      translation: 'Let us resolve this matter.',
+      sender_lang: senderLang,
+    }
+  }
+
+  it('translated messages are labeled "machine translation"', () => {
+    render(
+      <NegotiationThread
+        caseId="case-1"
+        party="initiator"
+        deliveredMessages={[makeTranslatedMsg()]}
+      />
+    )
+    expect(screen.getByTestId('machine-translation-label')).toBeTruthy()
+    expect(screen.getByText('machine translation')).toBeTruthy()
+  })
+
+  it('shows translated content and original in machine-translation block', () => {
+    render(
+      <NegotiationThread
+        caseId="case-1"
+        party="initiator"
+        deliveredMessages={[makeTranslatedMsg()]}
+      />
+    )
+    expect(screen.getByText('Let us resolve this matter.')).toBeTruthy()
+    expect(screen.getByText('Resolvamos este asunto.')).toBeTruthy()
+  })
+
+  it('applies RTL direction for Arabic sender', () => {
+    render(
+      <NegotiationThread
+        caseId="case-1"
+        party="initiator"
+        deliveredMessages={[makeTranslatedMsg('ar')]}
+      />
+    )
+    const block = screen.getByTestId('machine-translation-block')
+    expect(block.getAttribute('dir')).toBe('rtl')
+  })
+
+  it('non-translated messages have no machine-translation label', () => {
+    const plain = makeDeliveredMsg()
+    render(
+      <NegotiationThread caseId="case-1" party="initiator" deliveredMessages={[plain]} />
+    )
+    expect(screen.queryByTestId('machine-translation-label')).toBeNull()
+  })
+})

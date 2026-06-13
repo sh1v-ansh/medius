@@ -2,6 +2,8 @@
 
 import { useState } from 'react'
 
+const RTL_LANGS = new Set(['ar', 'he', 'fa', 'ur'])
+
 interface Message {
   msg_id: string
   sender: string
@@ -11,6 +13,10 @@ interface Message {
   original: string
   rewrite: string
   empathy_ack: string
+  // Phase 10: machine translation
+  translation?: string
+  is_machine_translation?: boolean
+  sender_lang?: string
 }
 
 interface NegotiationThreadProps {
@@ -99,20 +105,42 @@ export function NegotiationThread({
           <p className="text-xs text-gray-400">No messages yet.</p>
         ) : (
           <div className="space-y-2">
-            {deliveredMessages.map((m) => (
-              <div
-                key={m.msg_id}
-                data-testid={`delivered-msg-${m.msg_id}`}
-                className={`p-3 rounded-lg text-sm ${
-                  m.sender === party
-                    ? 'bg-blue-100 ml-8'
-                    : 'bg-gray-100 mr-8'
-                }`}
-              >
-                <p className="text-xs text-gray-500 mb-1 font-medium">{m.sender}</p>
-                <p className="text-gray-800">{m.content}</p>
-              </div>
-            ))}
+            {deliveredMessages.map((m) => {
+              const senderIsRTL = RTL_LANGS.has(m.sender_lang ?? '')
+              return (
+                <div
+                  key={m.msg_id}
+                  data-testid={`delivered-msg-${m.msg_id}`}
+                  className={`p-3 rounded-lg text-sm ${
+                    m.sender === party
+                      ? 'bg-blue-100 ml-8'
+                      : 'bg-gray-100 mr-8'
+                  }`}
+                >
+                  <p className="text-xs text-gray-500 mb-1 font-medium">{m.sender}</p>
+                  {m.is_machine_translation && m.translation ? (
+                    <>
+                      <p className="text-gray-800">{m.translation}</p>
+                      <div
+                        className="mt-2 border-t border-gray-200 pt-2"
+                        dir={senderIsRTL ? 'rtl' : 'ltr'}
+                        data-testid="machine-translation-block"
+                      >
+                        <span
+                          className="text-xs font-medium text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded"
+                          data-testid="machine-translation-label"
+                        >
+                          machine translation
+                        </span>
+                        <p className="text-xs text-gray-500 mt-1">{m.content}</p>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-gray-800">{m.content}</p>
+                  )}
+                </div>
+              )
+            })}
           </div>
         )}
       </div>
