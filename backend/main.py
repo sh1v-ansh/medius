@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Literal, Optional
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
@@ -17,6 +18,7 @@ from backend.legal_engine.ocr import ocr
 from backend.briefing import produce_briefing
 from backend.triage import run_triage
 from backend.steelman import build_steelman_argument, build_shared_reality
+from backend.negotiation import classify_tone, rewrite_message, empathy_ack, find_common_ground
 
 app = FastAPI(
     title="Medius Backend",
@@ -335,6 +337,141 @@ def shared_reality(case_id: str) -> Any:
             "ceiling": result["ceiling"],
             "statutes_matched": result["basis"]["statutes_matched"],
         },
+        human_decision=None,
+    )
+    return result
+
+
+# ── Negotiation + approval gate ───────────────────────────────────────────────
+
+class DraftRequest(BaseModel):
+    party: Literal["initiator", "respondent"]
+    text: str
+
+
+class ApproveRequest(BaseModel):
+    choice: Literal["original", "rewrite", "edit"]
+    edit_text: Optional[str] = None  # required when choice="edit"
+
+
+@app.post("/cases/{case_id}/messages/draft")
+def draft_message(case_id: str, payload: DraftRequest) -> Any:
+    """
+    AI classifies tone, produces rewrite and empathy_ack for SENDER only.
+    Message is set to pending_approval — NOT delivered to the other party.
+    """
+    case = get_case(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    tone = classify_tone(payload.text)
+    rewrite = rewrite_message(payload.text, tone)
+    ack = empathy_ack(tone)
+
+    msg = {
+        "msg_id": str(__import__("uuid").uuid4()),
+        "sender": payload.party,
+        "original": payload.text,
+        "rewrite": rewrite,
+        "content": "",
+        "tone": tone,
+        "empathy_ack": ack,
+        "status": "pending_approval",
+        "timestamp": datetime.utcnow().isoformat(),
+        "approved_by_human": False,
+        "human_choice": None,
+    }
+
+    case["negotiation"]["drafts"].append(msg)
+    save_case(case)
+
+    audit_log(
+        case_id,
+        actor="ai",
+        action="message_draft",
+        ai_suggestion={"rewrite": rewrite, "tone": tone},
+        human_decision=None,
+    )
+
+    return msg
+
+
+@app.post("/cases/{case_id}/messages/{msg_id}/approve")
+def approve_message(case_id: str, msg_id: str, payload: ApproveRequest) -> Any:
+    """
+    HUMAN approval gate. Chooses original / rewrite / custom edit.
+    Only after this call does the message become visible to the other party.
+    """
+    case = get_case(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    drafts = case["negotiation"]["drafts"]
+    draft = next((d for d in drafts if d["msg_id"] == msg_id), None)
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft message not found")
+    if draft["status"] == "delivered":
+        raise HTTPException(status_code=409, detail="Message already delivered")
+
+    if payload.choice == "original":
+        final_text = draft["original"]
+    elif payload.choice == "rewrite":
+        final_text = draft["rewrite"]
+    else:  # edit
+        if not payload.edit_text:
+            raise HTTPException(status_code=422, detail="edit_text required when choice='edit'")
+        final_text = payload.edit_text
+
+    draft["content"] = final_text
+    draft["status"] = "delivered"
+    draft["approved_by_human"] = True
+    draft["human_choice"] = payload.choice
+
+    # Append to the delivered thread (visible to both parties)
+    delivered = dict(draft)
+    case["negotiation"]["messages"].append(delivered)
+    save_case(case)
+
+    audit_log(
+        case_id,
+        actor="human",
+        action="message_approve",
+        ai_suggestion=draft["rewrite"],
+        human_decision={"choice": payload.choice, "final_text": final_text},
+    )
+
+    return delivered
+
+
+@app.get("/cases/{case_id}/messages")
+def list_messages(case_id: str, party: Optional[str] = None) -> Any:
+    """
+    Returns only DELIVERED messages — pending_approval drafts are never
+    included here (they are visible only to the sender via /messages/draft).
+    """
+    case = get_case(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+    return case["negotiation"]["messages"]
+
+
+@app.post("/cases/{case_id}/common-ground")
+def common_ground(case_id: str) -> Any:
+    """Identify agreed vs disputed points from both narratives. Informational only."""
+    case = get_case(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    narrative_i = case["parties"]["initiator"].get("narrative", "")
+    narrative_r = case["parties"]["respondent"].get("narrative", "")
+
+    result = find_common_ground(narrative_i, narrative_r)
+
+    audit_log(
+        case_id,
+        actor="ai",
+        action="common_ground",
+        ai_suggestion={"agreed_count": len(result["agreed"]), "disputed_count": len(result["disputed"])},
         human_decision=None,
     )
     return result

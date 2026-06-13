@@ -31,13 +31,21 @@ class IntakeData(BaseModel):
 
 
 class NegotiationMessage(BaseModel):
+    msg_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     sender: str
-    content: str
+    original: str
+    rewrite: str = ""
+    content: str = ""          # set to chosen text on approval
+    tone: Literal["neutral", "frustrated", "hostile"] = "neutral"
+    empathy_ack: str = ""
+    status: Literal["pending_approval", "delivered"] = "pending_approval"
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     approved_by_human: bool = False
+    human_choice: Optional[Literal["original", "rewrite", "edit"]] = None
 
 
 class Negotiation(BaseModel):
+    drafts: list[NegotiationMessage] = Field(default_factory=list)
     messages: list[NegotiationMessage] = Field(default_factory=list)
 
 
