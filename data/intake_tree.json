@@ -1,0 +1,171 @@
+{
+  "start": "q_dispute_type",
+  "nodes": {
+    "q_dispute_type": {
+      "id": "q_dispute_type",
+      "text": "What is your dispute mainly about?",
+      "type": "choice",
+      "choices": ["Security deposit", "Eviction / notice to leave", "Repairs needed", "Rent increase", "Other"],
+      "branches": {
+        "Security deposit": "q_deposit_amount",
+        "Eviction / notice to leave": "q_eviction_notice",
+        "Repairs needed": "q_repairs_notified",
+        "Rent increase": "q_rent_increase_notice",
+        "Other": "q_describe_other"
+      },
+      "default_next": "q_deposit_amount"
+    },
+    "q_deposit_amount": {
+      "id": "q_deposit_amount",
+      "text": "How much was your security deposit?",
+      "type": "short_answer",
+      "next": "q_deposit_returned"
+    },
+    "q_deposit_returned": {
+      "id": "q_deposit_returned",
+      "text": "Has your deposit been returned to you?",
+      "type": "yes_no",
+      "branches": {
+        "yes": "q_deposit_full",
+        "no": "q_days_since_moveout"
+      }
+    },
+    "q_deposit_full": {
+      "id": "q_deposit_full",
+      "text": "Was the full amount returned, or was some kept?",
+      "type": "choice",
+      "choices": ["Full amount", "Partial — some was kept"],
+      "branches": {
+        "Full amount": "q_doc_source",
+        "Partial — some was kept": "q_deduction_reason"
+      },
+      "default_next": "q_doc_source"
+    },
+    "q_deduction_reason": {
+      "id": "q_deduction_reason",
+      "text": "What reason did they give for keeping part of the deposit?",
+      "type": "short_answer",
+      "next": "q_doc_source"
+    },
+    "q_days_since_moveout": {
+      "id": "q_days_since_moveout",
+      "text": "How many days ago did you move out?",
+      "type": "short_answer",
+      "next": "q_doc_source"
+    },
+    "q_eviction_notice": {
+      "id": "q_eviction_notice",
+      "text": "Did you receive a written notice to leave?",
+      "type": "yes_no",
+      "branches": {
+        "yes": "q_notice_days",
+        "no": "q_verbal_notice"
+      }
+    },
+    "q_notice_days": {
+      "id": "q_notice_days",
+      "text": "How many days did the notice give you to leave?",
+      "type": "short_answer",
+      "next": "q_doc_source"
+    },
+    "q_verbal_notice": {
+      "id": "q_verbal_notice",
+      "text": "Were you told verbally to leave (not in writing)?",
+      "type": "yes_no",
+      "branches": {
+        "yes": "q_doc_source",
+        "no": "q_doc_source"
+      }
+    },
+    "q_repairs_notified": {
+      "id": "q_repairs_notified",
+      "text": "Did you notify your landlord in writing about the repairs needed?",
+      "type": "yes_no",
+      "branches": {
+        "yes": "q_repairs_days_waiting",
+        "no": "q_doc_source"
+      }
+    },
+    "q_repairs_days_waiting": {
+      "id": "q_repairs_days_waiting",
+      "text": "How many days have passed since you notified them?",
+      "type": "short_answer",
+      "next": "q_doc_source"
+    },
+    "q_rent_increase_notice": {
+      "id": "q_rent_increase_notice",
+      "text": "Did you receive written notice before the rent increase?",
+      "type": "yes_no",
+      "branches": {
+        "yes": "q_rent_increase_amount",
+        "no": "q_doc_source"
+      }
+    },
+    "q_rent_increase_amount": {
+      "id": "q_rent_increase_amount",
+      "text": "By how much did the rent increase (in dollars per month)?",
+      "type": "short_answer",
+      "next": "q_doc_source"
+    },
+    "q_describe_other": {
+      "id": "q_describe_other",
+      "text": "In a few words, what is the dispute about?",
+      "type": "short_answer",
+      "next": "q_doc_source"
+    },
+    "q_doc_source": {
+      "id": "q_doc_source",
+      "text": "Do you have a lease or rental agreement?",
+      "type": "choice",
+      "choices": ["Yes, I can upload a PDF", "Yes, I have a photo of it", "No document — I can describe it", "No document at all"],
+      "branches": {
+        "Yes, I can upload a PDF": "q_jurisdiction",
+        "Yes, I have a photo of it": "q_jurisdiction",
+        "No document — I can describe it": "q_verbal_terms",
+        "No document at all": "q_jurisdiction_nodoc"
+      },
+      "default_next": "q_jurisdiction"
+    },
+    "q_verbal_terms": {
+      "id": "q_verbal_terms",
+      "text": "How did you and the other party agree on the rental terms? (e.g. 'He said I could stay month-to-month if I paid $800 on the first')",
+      "type": "short_answer",
+      "next": "q_jurisdiction"
+    },
+    "q_jurisdiction_nodoc": {
+      "id": "q_jurisdiction_nodoc",
+      "text": "What city or town is the rental in?",
+      "type": "short_answer",
+      "next": "q_unit_type"
+    },
+    "q_unit_type": {
+      "id": "q_unit_type",
+      "text": "What type of place is it?",
+      "type": "choice",
+      "choices": ["Apartment", "House", "Room in a shared house", "Mobile home", "Other"],
+      "branches": {},
+      "default_next": "q_monthly_rent"
+    },
+    "q_monthly_rent": {
+      "id": "q_monthly_rent",
+      "text": "How much rent do you pay per month?",
+      "type": "short_answer",
+      "next": "q_jurisdiction"
+    },
+    "q_jurisdiction": {
+      "id": "q_jurisdiction",
+      "text": "What state is the property in?",
+      "type": "short_answer",
+      "next": "q_has_counsel"
+    },
+    "q_has_counsel": {
+      "id": "q_has_counsel",
+      "text": "Do you currently have a lawyer helping you?",
+      "type": "yes_no",
+      "branches": {
+        "yes": "__done__",
+        "no": "__done__"
+      }
+    }
+  }
+}
