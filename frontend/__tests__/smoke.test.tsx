@@ -11,16 +11,16 @@ vi.mock('next/link', () => ({
 describe('Home page', () => {
   it('renders Medius heading', () => {
     render(<Home />)
-    expect(screen.getByText(/Medius/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/Medius/i).length).toBeGreaterThan(0)
   })
 
-  it('renders Talk to a human button', () => {
+  it('renders Start my dispute CTA', () => {
     render(<Home />)
-    expect(screen.getByTestId('talk-to-human')).toBeTruthy()
+    expect(screen.getByText(/Start my dispute/i)).toBeTruthy()
   })
 
-  it('renders What we wont do list', () => {
+  it('renders How it works section', () => {
     render(<Home />)
-    expect(screen.getByTestId('wont-do-list')).toBeTruthy()
+    expect(screen.getByText(/How it works/i)).toBeTruthy()
   })
 })
