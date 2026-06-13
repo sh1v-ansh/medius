@@ -11,13 +11,15 @@ import { NegotiationThread } from '../../components/NegotiationThread'
 import { SharedRealityRange } from '../../components/SharedRealityRange'
 import { TalkToHuman } from '../../components/trust/TalkToHuman'
 import { AiBadge } from '../../components/trust/AiBadge'
+import { LeaseAnalysis } from '../../components/LeaseAnalysis'
 
-type TabId = 'tenant' | 'landlord' | 'neutral'
+type TabId = 'tenant' | 'landlord' | 'neutral' | 'lease'
 
 const TABS: { id: TabId; label: string }[] = [
   { id: 'tenant', label: 'Tenant' },
   { id: 'landlord', label: 'Landlord' },
   { id: 'neutral', label: 'Neutral (Mediator)' },
+  { id: 'lease', label: '📋 Lease Analysis' },
 ]
 
 function PartyBriefingTab({ briefing, party }: { briefing: any; party: string }) {
@@ -94,6 +96,8 @@ export default function CaseDetail() {
   const [audit, setAudit] = useState<any[]>([])
   const [deliveredMsgs, setDeliveredMsgs] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [leaseAnalysis, setLeaseAnalysis] = useState<any>(null)
+  const [leaseLoading, setLeaseLoading] = useState(false)
 
   useEffect(() => {
     if (!caseId) return
@@ -176,6 +180,29 @@ export default function CaseDetail() {
         )}
 
         {tab === 'neutral' && <NeutralTab caseData={caseData} />}
+
+        {tab === 'lease' && (
+          <div className="space-y-4">
+            {!leaseAnalysis && (
+              <button
+                type="button"
+                disabled={leaseLoading}
+                onClick={() => {
+                  setLeaseLoading(true)
+                  fetch(`/api/cases/${caseId}/analyze-lease`, { method: 'POST' })
+                    .then((r) => r.json())
+                    .then(setLeaseAnalysis)
+                    .catch(() => {})
+                    .finally(() => setLeaseLoading(false))
+                }}
+                className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+              >
+                {leaseLoading ? 'Analysing…' : 'Analyse lease'}
+              </button>
+            )}
+            {leaseAnalysis && <LeaseAnalysis data={leaseAnalysis} />}
+          </div>
+        )}
 
         {/* Audit panel always visible at bottom */}
         <div className="border-t border-gray-200 pt-6">

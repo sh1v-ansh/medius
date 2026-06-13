@@ -63,6 +63,7 @@ class Case(BaseModel):
     negotiation: Negotiation = Field(default_factory=Negotiation)
     escalation_packet: Optional[dict[str, Any]] = None
     settlement_draft: Optional[dict[str, Any]] = None
+    lease_analysis: Optional[dict[str, Any]] = None
 
 
 class CaseCreate(BaseModel):

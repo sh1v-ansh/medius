@@ -21,6 +21,7 @@ from backend.triage import run_triage
 from backend.steelman import build_steelman_argument, build_shared_reality
 from backend.negotiation import classify_tone, rewrite_message, empathy_ack, find_common_ground
 from backend.escalation import build_escalation_packet, build_settlement_draft
+from backend.lease_analysis import analyze_lease, SAMPLE_LEASE
 
 app = FastAPI(
     title="Medius Backend",
@@ -645,3 +646,56 @@ def translate(payload: TranslateRequest) -> Any:
         "translated": translated,
         "target_lang": payload.target_lang.strip(),
     }
+
+
+# ── Lease analysis ────────────────────────────────────────────────────────────
+
+@app.post("/cases/{case_id}/analyze-lease")
+def analyze_lease_endpoint(case_id: str, party: Literal["initiator", "respondent"] = "initiator") -> Any:
+    """
+    Analyze the uploaded lease document for this case and party.
+    Detects illegal clauses, concerning terms, and missing MA-required disclosures.
+    Falls back to the sample lease if no document has been uploaded (demo mode).
+    """
+    case = get_case(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    lease_text = case["intake"][party]["answers"].get("__doc_text__", "")
+    demo_mode = False
+    if not lease_text.strip():
+        lease_text = SAMPLE_LEASE
+        demo_mode = True
+
+    result = analyze_lease(lease_text)
+    result["demo_mode"] = demo_mode
+    if demo_mode:
+        result["demo_notice"] = (
+            "No lease document has been uploaded yet. "
+            "Showing analysis of a sample lease with intentional violations for demonstration."
+        )
+
+    case["lease_analysis"] = result
+    save_case(case)
+
+    audit_log(
+        case_id,
+        actor="ai",
+        action="lease_analysis",
+        ai_suggestion={
+            "red_flags": result["summary"]["red_flags"],
+            "yellow_flags": result["summary"]["yellow_flags"],
+            "missing_disclosures": result["summary"]["missing_disclosures"],
+            "demo_mode": demo_mode,
+        },
+        human_decision=None,
+    )
+    return result
+
+
+@app.get("/lease-analysis/sample")
+def get_sample_lease() -> Any:
+    """Return analysis of the built-in sample MA lease (hackathon demo)."""
+    result = analyze_lease(SAMPLE_LEASE)
+    result["demo_mode"] = True
+    return result
