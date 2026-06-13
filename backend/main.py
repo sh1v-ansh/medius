@@ -14,6 +14,7 @@ from backend.intake import (
 )
 from backend.legal_engine.transcribe import transcribe
 from backend.legal_engine.ocr import ocr
+from backend.briefing import produce_briefing
 
 app = FastAPI(
     title="Medius Backend",
@@ -177,6 +178,46 @@ def intake_finish(case_id: str, party: Literal["initiator", "respondent"]) -> An
 
     save_case(case)
     return result
+
+
+# ── Briefing ─────────────────────────────────────────────────────────────────
+
+@app.post("/cases/{case_id}/brief/{party}")
+def create_briefing(case_id: str, party: Literal["initiator", "respondent"]) -> Any:
+    """
+    Produce a full briefing for one party:
+    - redact -> analyze -> lockbox -> three reading levels -> WTMFM card
+    - stored in briefings[party]; audit-logged
+    """
+    case = get_case(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    # Source text: stored doc text or reconstructed narrative
+    answers = case["intake"][party]["answers"]
+    source_text = (
+        answers.get("__doc_text__")
+        or case["parties"][party].get("narrative")
+        or case["intake"][party].get("transcript")
+        or ""
+    )
+    if not source_text.strip():
+        raise HTTPException(status_code=422, detail="No intake text found — complete intake first")
+
+    perspective = case["parties"][party].get("role", party)
+    briefing = produce_briefing(source_text, perspective)
+
+    case["briefings"][party] = briefing
+    save_case(case)
+
+    audit_log(
+        case_id,
+        actor="ai",
+        action=f"briefing_{party}",
+        ai_suggestion={"levels_keys": list(briefing["levels"].keys()), "citations_count": len(briefing["citations"])},
+        human_decision=None,
+    )
+    return briefing
 
 
 @app.post("/cases/{case_id}/intake/upload-doc")
