@@ -15,6 +15,7 @@ from backend.intake import (
 from backend.legal_engine.transcribe import transcribe
 from backend.legal_engine.ocr import ocr
 from backend.briefing import produce_briefing
+from backend.triage import run_triage
 
 app = FastAPI(
     title="Medius Backend",
@@ -218,6 +219,35 @@ def create_briefing(case_id: str, party: Literal["initiator", "respondent"]) -> 
         human_decision=None,
     )
     return briefing
+
+
+# ── Triage ────────────────────────────────────────────────────────────────────
+
+@app.post("/cases/{case_id}/triage")
+def triage_case(case_id: str) -> Any:
+    """
+    Compute triage scores to sort the mediator queue.
+    Merits firewall enforced: has_counsel affects only power_asymmetry.
+    """
+    case = get_case(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    result = run_triage(case)
+    case["triage"] = result
+    save_case(case)
+
+    audit_log(
+        case_id,
+        actor="ai",
+        action="triage",
+        ai_suggestion={
+            "composite": result["composite"],
+            "scores": result["scores"],
+        },
+        human_decision=None,
+    )
+    return result
 
 
 @app.post("/cases/{case_id}/intake/upload-doc")
