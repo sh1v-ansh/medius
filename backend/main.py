@@ -19,6 +19,7 @@ from backend.briefing import produce_briefing
 from backend.triage import run_triage
 from backend.steelman import build_steelman_argument, build_shared_reality
 from backend.negotiation import classify_tone, rewrite_message, empathy_ack, find_common_ground
+from backend.escalation import build_escalation_packet, build_settlement_draft
 
 app = FastAPI(
     title="Medius Backend",
@@ -475,6 +476,77 @@ def common_ground(case_id: str) -> Any:
         human_decision=None,
     )
     return result
+
+
+# ── Escalation ────────────────────────────────────────────────────────────────
+
+@app.post("/cases/{case_id}/escalate")
+def escalate_case(case_id: str) -> Any:
+    """
+    Assemble the mediator escalation packet and set status to 'escalated'.
+    The AI assembles; it does not resolve.
+    """
+    case = get_case(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    packet = build_escalation_packet(case)
+    case["escalation_packet"] = packet
+    case["status"] = "escalated"
+    save_case(case)
+
+    audit_log(
+        case_id,
+        actor="ai",
+        action="escalate",
+        ai_suggestion={
+            "open_issues_count": len(packet["open_issues"]),
+            "timeline_events": len(packet["timeline"]),
+            "statutes_count": len(packet["applicable_statutes"]),
+        },
+        human_decision=None,
+    )
+    return packet
+
+
+# ── Settlement draft ──────────────────────────────────────────────────────────
+
+class SettlementRequest(BaseModel):
+    agreed_terms: list[str] = []
+    human_approved: bool = False
+
+
+@app.post("/cases/{case_id}/settlement-draft")
+def settlement_draft(case_id: str, payload: SettlementRequest) -> Any:
+    """
+    Fill a settlement template from case data.
+    Status flips to 'settled' ONLY when human_approved=True is passed.
+    The AI prepares; humans sign and decide.
+    """
+    case = get_case(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    draft = build_settlement_draft(
+        case,
+        agreed_terms=payload.agreed_terms,
+        human_approved=payload.human_approved,
+    )
+
+    case["settlement_draft"] = draft
+    if payload.human_approved:
+        case["status"] = "settled"
+
+    save_case(case)
+
+    audit_log(
+        case_id,
+        actor="ai" if not payload.human_approved else "human",
+        action="settlement_draft",
+        ai_suggestion={"terms_count": len(payload.agreed_terms)},
+        human_decision={"human_approved": payload.human_approved} if payload.human_approved else None,
+    )
+    return draft
 
 
 @app.post("/cases/{case_id}/intake/upload-doc")
